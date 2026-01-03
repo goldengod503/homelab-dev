@@ -1,0 +1,290 @@
+name: homelab # Project name; labels your containers/networks/volumes
+
+services:                          # Begin container service definitions
+
+   portainer:
+    image: portainer/portainer-ce:latest   # Community edition Portainer
+    container_name: portainer              # Fixed container name
+    ports:
+      - 9443:9443                          # HTTPS UI
+    volumes:
+      - portainer_data:/data               # Mount the logical volume at /data
+      - /var/run/docker.sock:/var/run/docker.sock
+    mem_limit: 256m
+    mem_reservation: 64m
+    restart: unless-stopped
+    environment:
+      TZ: America/Los_Angeles
+    healthcheck:
+      disable: true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    cpuset: "3"
+    cpu_shares: 128
+
+   homeassistant:                   # Home Assistant core
+    image: ghcr.io/home-assistant/home-assistant:stable # Stable HA image
+    container_name: homeassistant  # Fixed container name
+    network_mode: host             # Required for discovery/mDNS/multicast
+    privileged: true               # Needed for some integrations/hardware access
+    restart: unless-stopped        # Auto-restart policy
+    environment:
+      TZ: America/Los_Angeles      # Timezone inside the container
+    volumes:
+      - /opt/homelab/appdata/homeassistant/config:/config # Persist HA config, DB, backups
+      - /etc/localtime:/etc/localtime:ro  # Sync time with the host
+    mem_limit: 1280m               # Hard memory cap at 1.25 GiB
+    mem_reservation: 768m          # Soft reservation to reduce swap pressure
+    ulimits:
+      nofile: 65536                # Plenty of file descriptors (sockets)
+    healthcheck:                   # Mark healthy when web UI responds
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8123 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 20
+    logging:                       # Log rotation for HA
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    cpuset: "1,2"
+    cpu_shares: 1024
+
+   homebridge:                      # Apple HomeKit bridge
+    image: homebridge/homebridge:latest # Official Homebridge image
+    container_name: homebridge     # Fixed name
+    network_mode: host             # Needed for mDNS/HomeKit broadcasts
+    restart: unless-stopped        # Auto-restart policy
+    environment:
+      TZ: America/Los_Angeles      # Timezone
+      HOMEBRIDGE_CONFIG_UI: "1"    # Enable the web UI
+    volumes:
+      - /opt/homelab/appdata/homebridge:/homebridge # Persist config/plugins/accessories
+    mem_limit: 384m
+    mem_reservation: 128m
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >
+          node -e "require('http').get('http://127.0.0.1:8581',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+    logging:                       # Log rotation
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+   netdata:                         # Container service name used by Docker Compose
+    image: netdata/netdata:latest  # Use the official Netdata image (latest tag keeps it current)
+    container_name: netdata        # Fixed, human-readable container name
+    pid: host                      # Allow Netdata to see all host PIDs for process-level metrics
+    network_mode: host             # Shares the host’s network stack; exposes UI on http://<pi>:19999
+    restart: unless-stopped        # Automatically restart if Netdata or the system reboots
+    cap_add:
+      - SYS_PTRACE                 # Enables Netdata to trace running processes for detailed stats
+    # SYS_ADMIN removed — not needed for metrics and reduces privileges
+    security_opt:
+      - apparmor:unconfined        # Relax AppArmor restrictions so Netdata can read system files
+    environment:
+      TZ: America/Los_Angeles      # Set timezone for accurate timestamps and graphs
+      NETDATA_CLAIM_AUTO: "no"     # Prevents automatic linking to Netdata Cloud (local only)
+      MEMORY_MODE: ram             # Keeps Netdata’s internal DB in RAM for low disk I/O
+      PAGE_CACHE_SIZE: "64"        # Limits in-memory cache size to reduce memory footprint
+      DBENGINE_EXTENTS_SIZE: "1"   # Small extent files → lower RAM use and faster flushes
+      NETDATA_HOST_PROC: /host/proc  # Tell Netdata where to find the host’s /proc filesystem
+      NETDATA_HOST_SYS:  /host/sys   # Tell Netdata where to find the host’s /sys filesystem
+      DOCKER_HOST: unix:///var/run/docker.sock # Allow Netdata’s docker plugin to read container stats
+    volumes:
+      - netdataconfig:/etc/netdata   # Persistent Netdata configuration storage
+      - netdatalib:/var/lib/netdata  # Persistent Netdata database and state files
+      - netdatacache:/var/cache/netdata   # NEW: persistent cache/dbengine storage
+      - /proc:/host/proc:ro          # Mount host /proc (read-only) for system and process metrics
+      - /sys:/host/sys:ro            # Mount host /sys (read-only) for hardware and kernel metrics
+      - /sys/fs/cgroup:/host/sys/fs/cgroup:ro # Mount host cgroup root → fixes cgroup_ram_in_use error
+      - /etc/passwd:/host/etc/passwd:ro  # Allow Netdata to resolve user IDs to names
+      - /etc/group:/host/etc/group:ro    # Allow Netdata to resolve group IDs to names
+      - /etc/localtime:/etc/localtime:ro # Keeps Netdata container’s clock in sync with host
+      - /etc/os-release:/host/etc/os-release:ro # Read host OS info for system overview
+      - /var/log:/host/var/log:ro       # Lets Netdata inspect system logs (for log-based metrics)
+      - /var/run/docker.sock:/var/run/docker.sock:ro # Lets Netdata monitor Docker containers
+    # tmpfs:
+    #  - /var/cache/netdata:size=384m,mode=0755 # Use in-RAM cache for temporary data → faster & wear-safe
+    mem_limit: 768m                 # Hard limit to prevent Netdata from exceeding 512 MB RAM
+    mem_reservation: 384m           # Soft reservation — scheduler tries to keep at least 256 MB free
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:19999 || exit 1"] # Check if Netdata’s web UI responds
+      interval: 30s                 # Run the health check every 30 seconds
+      timeout: 5s                   # Consider it failed if no response within 5 seconds
+      retries: 20                   # Allow up to 20 failed checks before marking unhealthy
+    logging:
+      driver: json-file             # Use default JSON log driver
+      options:
+        max-size: "10m"             # Rotate logs after 10 MB
+        max-file: "3"               # Keep up to 3 rotated log files
+    cpuset: "3"
+    cpu_shares: 256
+
+   scrypted:                        # Scrypted (camera/NVR automation)
+    image: koush/scrypted:latest          # Official Scrypted image
+    container_name: scrypted       # Fixed name
+    network_mode: host             # Low-latency streaming
+    privileged: true               # Needed for hardware acceleration devices
+    restart: unless-stopped        # Auto-restart
+    environment:
+      TZ: America/Los_Angeles      # Timezone
+      SCRYPTED_FFMPEG_CPU_USAGE: "veryfast" # Fallback CPU preset if no HW accel
+      SCRYPTED_FFMPEG_THREADS: "2" # Limit threads per transcode on Pi
+      LD_LIBRARY_PATH: /opt/vc/lib # Legacy VideoCore libs (safe to keep)
+    shm_size: "512m"               # Larger /dev/shm for ffmpeg ring buffers
+    devices:                       # v4l2-m2m nodes for HW encode/decode
+      - /dev/video10:/dev/video10
+      - /dev/video11:/dev/video11
+      - /dev/video12:/dev/video12
+      # - /dev/vchiq:/dev/vchiq    # Uncomment only if using legacy camera stack
+    volumes:
+      - /opt/homelab/appdata/scrypted/volume:/server/volume # Persist Scrypted config/assets
+      - /opt/vc:/opt/vc           # Legacy VC libs (harmless on new stacks)
+    ports:
+      - 10443:10443               # Expose Scrypted UI (HTTPS)
+    mem_limit: 3g                 # Cap at 3 GiB to protect the system
+    mem_reservation: 1g           # Reserve 1 GiB to reduce swapping
+    ulimits:
+      nofile: 65536               # Many sockets for multiple cameras
+    healthcheck:                   # UI must respond on 10443
+      test: ["CMD-SHELL", "curl -ksf https://127.0.0.1:10443/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 40
+    logging:                       # Log rotation
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # cpus: "3.0"                 # Optional: limit CPU share (uncomment if needed)
+    # cpuset: "1-3"               # Optional: pin away from core 0 (OS/HA)
+
+   snippet-box:
+     image: pawelmalak/snippet-box:arm
+     container_name: snippet-box
+     environment:
+       TZ: America/Los_Angeles
+     ports:
+       - "5000:5000"
+     volumes:
+       # Persist your snippets/database
+       - /opt/homelab/appdata/snippet-box/data:/app/data
+     restart: unless-stopped
+   
+   homepage:                        # getHomepage dashboard
+    image: ghcr.io/gethomepage/homepage:latest # Latest Homepage image
+    container_name: homepage       # Fixed name
+    ports:
+      - 3000:3000                  # Expose UI on host 3000
+    environment:
+      HOMEPAGE_ALLOWED_HOSTS: 192.168.4.68:3000 # Required host:port whitelist
+      TZ: America/Los_Angeles      # Timezone
+    volumes:
+      - /opt/homelab/appdata/homepage/config:/app/config     # Config directory
+      - /opt/homelab/appdata/homepage/icons:/app/public/icons # Static icons served by the app
+      - /var/run/docker.sock:/var/run/docker.sock:ro # Read-only Docker integration
+    mem_limit: 256m
+    mem_reservation: 64m
+    restart: unless-stopped        # Auto-restart
+    healthcheck:                   # UI must render
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/ >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 20
+    logging:                       # Log rotation
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ---------------------------
+  # Open WebUI (ChatGPT-like UI)
+  # ---------------------------
+  # - Use OpenAI now via API key
+  # - Point to local models later (Ollama/OpenAI-compatible endpoints)
+  # - Web UI exposed on http://<pi-ip>:4000
+   openwebui:
+     image: ghcr.io/open-webui/open-webui:v0.6.42
+     container_name: open-webui
+     restart: unless-stopped
+     depends_on:
+       - ollama
+     ports:
+       - "4000:8080"
+     volumes:
+       - open-webui:/app/backend/data
+     environment:
+       TZ: America/Los_Angeles
+       OPENAI_API_KEY: ${OPENAI_API_KEY}
+       OPENAI_API_BASE_URL: https://api.openai.com/v1
+       OLLAMA_BASE_URL: http://ollama:11434
+       
+    # Optional: reduce background "helper"  calls / churn
+       ENABLE_AUTOCOMPLETE_GENERATION: "false"
+       ENABLE_TITLE_GENERATION: "false"
+       ENABLE_TAGS_GENERATION: "false"
+       ENABLE_FOLLOW_UP_GENERATION: "false"
+
+    # Big RAM savers (stop loading local SentenceTransformers + Whisper)
+       RAG_EMBEDDING_ENGINE: ollama
+       RAG_EMBEDDING_MODEL: nomic-embed-text
+       AUDIO_STT_ENGINE: webapi
+     mem_limit: 768m
+     mem_reservation: 256m
+     healthcheck:
+       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3).read()\" || exit 1"]
+       interval: 30s
+       timeout: 5s
+       retries: 3
+       start_period: 30s
+     logging:
+       driver: json-file
+       options:
+         max-size: "10m"
+         max-file: "3"
+
+  # -------------------------
+  # Ollama (local model host)
+  # -------------------------
+  # - NOT exposed to your LAN by default (no ports:)
+  # - Only Open WebUI can reach it via Docker network at http://ollama:11434
+  # - If you later want LAN access, you can publish 11434
+   ollama:
+     image: ollama/ollama:latest                       # Multi-arch; works on arm64  [oai_citation:8‡Docker Hub](https://hub.docker.com/r/ollama/ollama?utm_source=chatgpt.com)
+     container_name: ollama
+     restart: unless-stopped
+     volumes:
+       - ollama:/root/.ollama                          # Persist pulled models  [oai_citation:9‡Docker Hub](https://hub.docker.com/r/ollama/ollama?utm_source=chatgpt.com)
+     environment:
+       TZ: America/Los_Angeles
+    # If you ever WANT LAN access to Ollama's API, uncomment:
+    # ports:
+    #   - "11434:11434"
+     healthcheck:
+       disable: true
+     logging:
+       driver: json-file
+       options:
+         max-size: "10m"
+         max-file: "3"
+
+volumes:
+  portainer_data:
+    external: true
+    name: goldengod503_portainer_data   # your original volume with the real portainer.db
+  netdataconfig:
+  netdatalib:                     # Netdata DB/state
+  netdatacache:
+  open-webui:
+  ollama:
