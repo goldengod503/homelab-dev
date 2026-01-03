@@ -39,3 +39,8 @@ backups/
 .DS_Store
 Thumbs.db
 *~
+
+# =========================
+# AI live context (derived)
+# =========================
+ai_context/
