@@ -224,6 +224,7 @@ services:                          # Begin container service definitions
        - "4000:8080"
      volumes:
        - open-webui:/app/backend/data
+       - /opt/homelab/ai_context:/context:ro
      environment:
        TZ: America/Los_Angeles
        OPENAI_API_KEY: ${OPENAI_API_KEY}
