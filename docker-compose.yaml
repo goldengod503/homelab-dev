@@ -266,12 +266,13 @@ services:                          # Begin container service definitions
      container_name: ollama
      restart: unless-stopped
      volumes:
-       - ollama:/root/.ollama                          # Persist pulled models  [oai_citation:9‡Docker Hub](https://hub.docker.com/r/ollama/ollama?utm_source=chatgpt.com)
+       - /opt/homelab/appdata/ollama:/root/.ollama
+       - /opt/homelab/appdata/models:/models                          # Persist pulled models  [oai_citation:9‡Docker Hub](https://hub.docker.com/r/ollama/ollama?utm_source=chatgpt.com)
      environment:
        TZ: America/Los_Angeles
-    # If you ever WANT LAN access to Ollama's API, uncomment:
-    # ports:
-    #   - "11434:11434"
+    #  If you ever WANT LAN access to Ollama's API, uncomment:
+     ports:
+       - "11434:11434"
      healthcheck:
        disable: true
      logging:
