@@ -8,6 +8,12 @@ TS="$(date +%F_%H%M%S)"
 STAGE="${BACKUP_ROOT}/stage_${TS}"
 VOL_DIR="${STAGE}/volumes"
 
+# Paths we do NOT want inside homelab_files.tgz (re-downloadable model blobs)
+EXCLUDE_APPDATA_PATHS=(
+  "${COMPOSE_DIR}/appdata/ollama/models"
+  "${COMPOSE_DIR}/appdata/models"
+)
+
 mkdir -p "${STAGE}" "${VOL_DIR}"
 cd "${COMPOSE_DIR}"
 
@@ -18,17 +24,30 @@ docker volume ls > "${STAGE}/docker_volumes.txt"
 docker network ls > "${STAGE}/docker_networks.txt"
 
 echo "==> Archive: bind-mounted homelab data"
-SIZE_BYTES="$(sudo du -sb "${COMPOSE_DIR}/appdata" | cut -f1)"
+
+# Estimate size for pv progress (try to exclude the huge model dirs so ETA is sane).
+# Some du builds may not support --exclude, so we fall back.
+SIZE_BYTES=""
+if sudo du --help 2>/dev/null | grep -q -- '--exclude'; then
+  # shellcheck disable=SC2068
+  SIZE_BYTES="$(sudo du -sb "${COMPOSE_DIR}/appdata" \
+    $(printf -- ' --exclude=%q' "${EXCLUDE_APPDATA_PATHS[@]}") \
+    2>/dev/null | cut -f1 || true)"
+fi
+
+if [[ -z "${SIZE_BYTES}" || "${SIZE_BYTES}" == "0" ]]; then
+  SIZE_BYTES="$(sudo du -sb "${COMPOSE_DIR}/appdata" | cut -f1)"
+fi
 
 # Stream tar through pv so you get progress/ETA.
-# Note: we only estimate based on appdata size; compression changes the final file size.
+# Note: we only estimate based on appdata size; compression changes final file size.
 sudo tar -cf - \
+  "$(printf -- ' --exclude=%q' "${EXCLUDE_APPDATA_PATHS[@]}")" \
   "${COMPOSE_DIR}/docker-compose.yaml" \
   "${COMPOSE_DIR}/appdata" \
   "${COMPOSE_DIR}/.env" 2>/dev/null \
 | pv -s "${SIZE_BYTES}" \
 | gzip -1 > "${STAGE}/homelab_files.tgz"
-
 
 echo "==> Discovering docker volumes used by this compose project"
 mapfile -t CIDS < <(docker compose ps -q)
@@ -44,10 +63,28 @@ mapfile -t VOLS < <(printf "%s\n" "${VOLS[@]}" | sort -u)
 echo "==> Backing up volumes (${#VOLS[@]} found)"
 for v in "${VOLS[@]}"; do
   echo "  -> ${v}"
-  docker run --rm \
-    -v "${v}:/volume:ro" \
-    -v "${VOL_DIR}:/backup" \
-    alpine:3.20 sh -lc "cd /volume && tar -czf /backup/${v}.tgz ."
+
+  if [[ "${v}" == "homelab_open-webui" ]]; then
+    # OpenWebUI cache dirs are rebuildable and can be large; keep the important bits.
+    docker run --rm \
+      -v "${v}:/volume:ro" \
+      -v "${VOL_DIR}:/backup" \
+      alpine:3.20 sh -lc '
+        cd /volume
+        tar -czf "/backup/'"${v}"'.tgz" \
+          --exclude="./cache/embedding" \
+          --exclude="./cache/whisper" \
+          --exclude="./cache/tiktoken" \
+          --exclude="./cache/audio" \
+          --exclude="./cache/image" \
+          .
+      '
+  else
+    docker run --rm \
+      -v "${v}:/volume:ro" \
+      -v "${VOL_DIR}:/backup" \
+      alpine:3.20 sh -lc "cd /volume && tar -czf /backup/${v}.tgz ."
+  fi
 done
 
 echo "==> Uploading to Google Drive (encrypted)"
