@@ -36,6 +36,8 @@ services:                          # Begin container service definitions
     volumes:
       - /opt/homelab/appdata/homeassistant/config:/config # Persist HA config, DB, backups
       - /etc/localtime:/etc/localtime:ro  # Sync time with the host
+      - /run/dbus:/run/dbus:ro #bluetooth
+      - /run/udev:/run/udev:ro #bluetooth
     mem_limit: 1280m               # Hard memory cap at 1.25 GiB
     mem_reservation: 768m          # Soft reservation to reduce swap pressure
     ulimits:
