@@ -8,10 +8,14 @@ TS="$(date +%F_%H%M%S)"
 STAGE="${BACKUP_ROOT}/stage_${TS}"
 VOL_DIR="${STAGE}/volumes"
 
-# Paths we do NOT want inside homelab_files.tgz (re-downloadable model blobs)
-EXCLUDE_APPDATA_PATHS=(
-  "${COMPOSE_DIR}/appdata/ollama/models"
-  "${COMPOSE_DIR}/appdata/models"
+# Re-downloadable model blobs we do NOT want inside homelab_files.tgz
+EXCLUDE_OLLAMA_MODELS="${COMPOSE_DIR}/appdata/ollama/models"
+EXCLUDE_MODELS_DIR="${COMPOSE_DIR}/appdata/models"
+
+# Volumes to SKIP (rebuildable / not needed for DR restore)
+# Netdata cache (dbengine) can be large; config/lib are enough to restore the stack.
+SKIP_VOLUMES=(
+  "homelab_netdatacache"
 )
 
 mkdir -p "${STAGE}" "${VOL_DIR}"
@@ -25,28 +29,27 @@ docker network ls > "${STAGE}/docker_networks.txt"
 
 echo "==> Archive: bind-mounted homelab data"
 
-# Estimate size for pv progress (try to exclude the huge model dirs so ETA is sane).
-# Some du builds may not support --exclude, so we fall back.
+# Estimate size for pv progress (try excluding huge model dirs so ETA is sane).
+# If this du build doesn't support --exclude, fall back to full appdata size.
 SIZE_BYTES=""
 if sudo du --help 2>/dev/null | grep -q -- '--exclude'; then
-  # shellcheck disable=SC2068
-  SIZE_BYTES="$(sudo du -sb "${COMPOSE_DIR}/appdata" \
-    $(printf -- ' --exclude=%q' "${EXCLUDE_APPDATA_PATHS[@]}") \
-    2>/dev/null | cut -f1 || true)"
+  SIZE_BYTES="$(sudo du -sb \
+    --exclude="${EXCLUDE_OLLAMA_MODELS}" \
+    --exclude="${EXCLUDE_MODELS_DIR}" \
+    "${COMPOSE_DIR}/appdata" 2>/dev/null | cut -f1 || true)"
 fi
-
 if [[ -z "${SIZE_BYTES}" || "${SIZE_BYTES}" == "0" ]]; then
   SIZE_BYTES="$(sudo du -sb "${COMPOSE_DIR}/appdata" | cut -f1)"
 fi
 
-# Stream tar through pv so you get progress/ETA.
-# Note: we only estimate based on appdata size; compression changes final file size.
+# Stream tar through pv so you get progress/%/ETA.
 sudo tar -cf - \
-  "$(printf -- ' --exclude=%q' "${EXCLUDE_APPDATA_PATHS[@]}")" \
+  --exclude="${EXCLUDE_OLLAMA_MODELS}" \
+  --exclude="${EXCLUDE_MODELS_DIR}" \
   "${COMPOSE_DIR}/docker-compose.yaml" \
   "${COMPOSE_DIR}/appdata" \
   "${COMPOSE_DIR}/.env" 2>/dev/null \
-| pv -s "${SIZE_BYTES}" \
+| pv --force -s "${SIZE_BYTES}" -p -t -e -r -a \
 | gzip -1 > "${STAGE}/homelab_files.tgz"
 
 echo "==> Discovering docker volumes used by this compose project"
@@ -60,8 +63,23 @@ for cid in "${CIDS[@]}"; do
 done
 mapfile -t VOLS < <(printf "%s\n" "${VOLS[@]}" | sort -u)
 
+# helper: returns 0 if $1 is in SKIP_VOLUMES
+should_skip_volume() {
+  local vol="$1"
+  local s
+  for s in "${SKIP_VOLUMES[@]}"; do
+    [[ "$vol" == "$s" ]] && return 0
+  done
+  return 1
+}
+
 echo "==> Backing up volumes (${#VOLS[@]} found)"
 for v in "${VOLS[@]}"; do
+  if should_skip_volume "$v"; then
+    echo "  -> ${v} (skipping: rebuildable)"
+    continue
+  fi
+
   echo "  -> ${v}"
 
   if [[ "${v}" == "homelab_open-webui" ]]; then
@@ -97,7 +115,6 @@ rclone copy "${STAGE}" "${REMOTE}/${TS}" --transfers 4 --checkers 8 --stats 30s
 KEEP_REMOTE=15
 echo "==> Pruning remote backups (keep newest ${KEEP_REMOTE})"
 
-# Timestamp folder names sort correctly (lexical == chronological)
 mapfile -t REMOTE_DIRS < <(
   rclone lsf "${REMOTE}" --dirs-only --max-depth 1 \
   | sed 's:/$::' \
@@ -117,7 +134,10 @@ else
   done
 fi
 
-echo "==> Cleanup: keep last 7 local stages"
-ls -1dt "${BACKUP_ROOT}"/stage_* 2>/dev/null | tail -n +8 | xargs -r rm -rf
+# -------------------------
+# Local cleanup: keep newest 2 stages
+# -------------------------
+echo "==> Cleanup: keep last 2 local stages"
+ls -1dt "${BACKUP_ROOT}"/stage_* 2>/dev/null | tail -n +3 | xargs -r rm -rf
 
 echo "==> Done: ${TS}"
