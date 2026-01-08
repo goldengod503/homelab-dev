@@ -283,6 +283,37 @@ services:                          # Begin container service definitions
          max-size: "10m"
          max-file: "3"
 
+  # -------------------------
+  # Backup Monitor Dashboard
+  # -------------------------
+  # - Tracks nightly backup metrics (duration, size, trends)
+  # - Web UI on http://<pi-ip>:5001
+  # - Lightweight Flask app with SQLite storage
+   backup-monitor:
+     build: /opt/homelab/appdata/backup-monitor
+     container_name: backup-monitor
+     restart: unless-stopped
+     ports:
+       - "5001:5001"
+     volumes:
+       - /opt/homelab/appdata/backup-monitor:/data
+     environment:
+       TZ: America/Los_Angeles
+     mem_limit: 128m
+     mem_reservation: 64m
+     healthcheck:
+       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:5001/health || exit 1"]
+       interval: 30s
+       timeout: 5s
+       retries: 3
+     logging:
+       driver: json-file
+       options:
+         max-size: "10m"
+         max-file: "3"
+     cpuset: "3"
+     cpu_shares: 128
+
 volumes:
   portainer_data:
     external: true

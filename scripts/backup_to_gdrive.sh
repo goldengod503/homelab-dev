@@ -8,6 +8,12 @@ TS="$(date +%F_%H%M%S)"
 STAGE="${BACKUP_ROOT}/stage_${TS}"
 VOL_DIR="${STAGE}/volumes"
 
+# Metrics collection
+METRICS_DIR="/opt/homelab/appdata/backup-monitor"
+METRICS_FILE="${METRICS_DIR}/metrics.jsonl"
+START_TIME=$(date +%s)
+declare -A PHASE_TIMES
+
 # Re-downloadable model blobs we do NOT want inside homelab_files.tgz
 EXCLUDE_OLLAMA_MODELS="${COMPOSE_DIR}/appdata/ollama/models"
 EXCLUDE_MODELS_DIR="${COMPOSE_DIR}/appdata/models"
@@ -18,16 +24,19 @@ SKIP_VOLUMES=(
   "homelab_netdatacache"
 )
 
-mkdir -p "${STAGE}" "${VOL_DIR}"
+mkdir -p "${STAGE}" "${VOL_DIR}" "${METRICS_DIR}"
 cd "${COMPOSE_DIR}"
 
 echo "==> Snapshot: compose + runtime"
+PHASE_START=$(date +%s)
 docker compose config > "${STAGE}/compose.resolved.yaml"
 docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}' > "${STAGE}/docker_ps.txt"
 docker volume ls > "${STAGE}/docker_volumes.txt"
 docker network ls > "${STAGE}/docker_networks.txt"
+PHASE_TIMES[snapshot]=$(($(date +%s) - PHASE_START))
 
 echo "==> Archive: bind-mounted homelab data"
+PHASE_START=$(date +%s)
 
 # Estimate size for pv progress (try excluding huge model dirs so ETA is sane).
 # If this du build doesn't support --exclude, fall back to full appdata size.
@@ -52,6 +61,8 @@ sudo tar -cf - \
 | pv --force -s "${SIZE_BYTES}" -p -t -e -r -a \
 | gzip -1 > "${STAGE}/homelab_files.tgz"
 
+PHASE_TIMES[archive]=$(($(date +%s) - PHASE_START))
+
 echo "==> Discovering docker volumes used by this compose project"
 mapfile -t CIDS < <(docker compose ps -q)
 
@@ -74,6 +85,7 @@ should_skip_volume() {
 }
 
 echo "==> Backing up volumes (${#VOLS[@]} found)"
+PHASE_START=$(date +%s)
 for v in "${VOLS[@]}"; do
   if should_skip_volume "$v"; then
     echo "  -> ${v} (skipping: rebuildable)"
@@ -104,10 +116,13 @@ for v in "${VOLS[@]}"; do
       alpine:3.20 sh -lc "cd /volume && tar -czf /backup/${v}.tgz ."
   fi
 done
+PHASE_TIMES[volumes]=$(($(date +%s) - PHASE_START))
 
 echo "==> Uploading to Google Drive (encrypted)"
+PHASE_START=$(date +%s)
 rclone mkdir "${REMOTE}" >/dev/null 2>&1 || true
 rclone copy "${STAGE}" "${REMOTE}/${TS}" --transfers 4 --checkers 8 --stats 30s
+PHASE_TIMES[upload]=$(($(date +%s) - PHASE_START))
 
 # -------------------------
 # Remote prune: keep newest 15 backups
@@ -140,4 +155,14 @@ fi
 echo "==> Cleanup: keep last 2 local stages"
 ls -1dt "${BACKUP_ROOT}"/stage_* 2>/dev/null | tail -n +3 | xargs -r rm -rf
 
-echo "==> Done: ${TS}"
+# Calculate final metrics
+END_TIME=$(date +%s)
+TOTAL_DURATION=$((END_TIME - START_TIME))
+BACKUP_SIZE=$(du -sb "${STAGE}" | cut -f1)
+
+# Write metrics as JSON line
+cat >> "${METRICS_FILE}" <<EOF
+{"timestamp":"$(date -Iseconds)","backup_id":"${TS}","success":true,"duration_total":${TOTAL_DURATION},"duration_snapshot":${PHASE_TIMES[snapshot]},"duration_archive":${PHASE_TIMES[archive]},"duration_volumes":${PHASE_TIMES[volumes]},"duration_upload":${PHASE_TIMES[upload]},"size_bytes":${BACKUP_SIZE}}
+EOF
+
+echo "==> Done: ${TS} (${TOTAL_DURATION}s, $(numfmt --to=iec-i --suffix=B ${BACKUP_SIZE}))"
