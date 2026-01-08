@@ -8,10 +8,15 @@ from flask import Flask, render_template_string, jsonify
 import sqlite3
 import json
 import os
+import threading
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
 app = Flask(__name__)
+
+# Config - check for new metrics every 6 hours
+IMPORT_INTERVAL_SECONDS = 6 * 60 * 60  # 6 hours
 
 # Config
 DB_PATH = "/data/backups.db"
@@ -402,12 +407,28 @@ def health():
     """Health check endpoint"""
     return jsonify({'status': 'ok'})
 
+def periodic_import():
+    """Background thread to periodically import new metrics"""
+    while True:
+        try:
+            time.sleep(IMPORT_INTERVAL_SECONDS)
+            print(f"[{datetime.now().isoformat()}] Running periodic metrics import...")
+            import_metrics()
+            print(f"[{datetime.now().isoformat()}] Metrics import completed")
+        except Exception as e:
+            print(f"[{datetime.now().isoformat()}] Error during periodic import: {e}")
+
 if __name__ == '__main__':
     # Initialize database
     init_db()
 
     # Import any existing metrics
     import_metrics()
+
+    # Start background thread for periodic imports
+    import_thread = threading.Thread(target=periodic_import, daemon=True)
+    import_thread.start()
+    print(f"Started periodic import thread (every {IMPORT_INTERVAL_SECONDS / 3600} hours)")
 
     # Run Flask
     app.run(host='0.0.0.0', port=5001)
