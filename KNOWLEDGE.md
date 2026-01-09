@@ -77,3 +77,6 @@ Restore:
 - docker compose up -d
 
 Inventory explains expected state.
+
+## Inventory snapshots
+- See: `inventory/INVENTORY_EXPLAINED.md`
