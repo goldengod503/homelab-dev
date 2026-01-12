@@ -44,3 +44,4 @@ Thumbs.db
 # AI live context (derived)
 # =========================
 ai_context/
+scripts/*.known-good
