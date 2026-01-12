@@ -125,29 +125,41 @@ rclone copy "${STAGE}" "${REMOTE}/${TS}" --transfers 4 --checkers 8 --stats 30s
 PHASE_TIMES[upload]=$(($(date +%s) - PHASE_START))
 
 # -------------------------
-# Remote prune: keep newest 15 backups
+# Remote prune: keep only the last 5 days on Google Drive
 # -------------------------
-KEEP_REMOTE=15
-echo "==> Pruning remote backups (keep newest ${KEEP_REMOTE})"
+KEEP_DAYS=5
+CUTOFF_EPOCH="$(date -d "${KEEP_DAYS} days ago" +%s)"
+
+echo "==> Pruning remote backups (keep last ${KEEP_DAYS} days)"
+echo "    Cutoff: $(date -d "@${CUTOFF_EPOCH}" -Iseconds)"
 
 mapfile -t REMOTE_DIRS < <(
   rclone lsf "${REMOTE}" --dirs-only --max-depth 1 \
   | sed 's:/$::' \
+  | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{6}$' \
   | sort
 )
 
-COUNT="${#REMOTE_DIRS[@]}"
-if (( COUNT <= KEEP_REMOTE )); then
-  echo "    Nothing to prune (found ${COUNT})"
-else
-  TO_DELETE=$((COUNT - KEEP_REMOTE))
-  echo "    Found ${COUNT}; deleting oldest ${TO_DELETE}"
+DELETED=0
+SKIPPED=0
 
-  for d in "${REMOTE_DIRS[@]:0:TO_DELETE}"; do
-    echo "    Deleting: ${REMOTE}/${d}"
-    rclone purge "${REMOTE}/${d}"
-  done
-fi
+for d in "${REMOTE_DIRS[@]}"; do
+  # Convert "YYYY-MM-DD_HHMMSS" -> "YYYY-MM-DD HHMMSS" for date parsing
+  if ! DIR_EPOCH="$(date -d "${d/_/ }" +%s 2>/dev/null)"; then
+    echo "    Skipping (unparseable): ${d}"
+    SKIPPED=$((SKIPPED + 1))
+    continue
+  fi
+
+  if (( DIR_EPOCH < CUTOFF_EPOCH )); then
+    echo "    Deleting (older than cutoff): ${REMOTE}/${d}"
+    # Don't use Drive trash; actually free space
+    rclone purge "${REMOTE}/${d}" --drive-use-trash=false
+    DELETED=$((DELETED + 1))
+  fi
+done
+
+echo "    Remote prune done: deleted=${DELETED}, skipped=${SKIPPED}"
 
 # -------------------------
 # Local cleanup: keep newest 2 stages
