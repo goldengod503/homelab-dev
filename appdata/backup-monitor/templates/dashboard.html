@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Backup Monitor</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <h1>🏠 Homelab Backup Monitor</h1>
+        <p class="subtitle">Nightly backup metrics • Last 30 days</p>
+
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-label">Total Backups</div>
+                <div class="stat-value">{{ stats.total_backups }}</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Success Rate</div>
+                <div class="stat-value success">{{ stats.success_rate }}<span class="stat-unit">%</span></div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Avg Duration</div>
+                <div class="stat-value">{{ stats.avg_duration // 60 }}<span class="stat-unit">min</span></div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Avg Size</div>
+                <div class="stat-value">{{ stats.avg_size_mb }}<span class="stat-unit">MB</span></div>
+            </div>
+        </div>
+
+        <div class="chart-container">
+            <div class="chart-title">Backup Duration Trend</div>
+            <div class="canvas-wrapper">
+                <canvas id="durationChart"></canvas>
+            </div>
+        </div>
+
+        <div class="chart-container">
+            <div class="chart-title">Backup Size Trend</div>
+            <div class="canvas-wrapper">
+                <canvas id="sizeChart"></canvas>
+            </div>
+        </div>
+
+        <div class="chart-container">
+            <div class="chart-title">Duration Breakdown (Last Backup)</div>
+            <div class="canvas-wrapper">
+                <canvas id="breakdownChart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/charts.js') }}"></script>
+</body>
+</html>
