@@ -64,6 +64,23 @@ async function loadCharts() {
         options: chartDefaults
     });
 
+    // Throughput chart
+    new Chart(document.getElementById('throughputChart'), {
+        type: 'line',
+        data: {
+            labels: data.map(d => new Date(d.timestamp).toLocaleDateString()),
+            datasets: [{
+                label: 'Throughput (MB/s)',
+                data: data.map(d => d.throughput_mb_per_sec),
+                borderColor: chartColors.warning,
+                backgroundColor: chartColors.warning + '20',
+                tension: 0.3,
+                fill: true
+            }]
+        },
+        options: chartDefaults
+    });
+
     // Breakdown chart (last backup)
     if (data.length > 0) {
         const last = data[data.length - 1];

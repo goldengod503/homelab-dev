@@ -29,6 +29,10 @@
                 <div class="stat-label">Avg Size</div>
                 <div class="stat-value">{{ stats.avg_size_mb }}<span class="stat-unit">MB</span></div>
             </div>
+            <div class="stat-card">
+                <div class="stat-label">Avg Throughput</div>
+                <div class="stat-value">{{ stats.avg_throughput_mb_per_sec }}<span class="stat-unit">MB/s</span></div>
+            </div>
         </div>
 
         <div class="chart-container">
@@ -42,6 +46,13 @@
             <div class="chart-title">Backup Size Trend</div>
             <div class="canvas-wrapper">
                 <canvas id="sizeChart"></canvas>
+            </div>
+        </div>
+
+        <div class="chart-container">
+            <div class="chart-title">Throughput Trend</div>
+            <div class="canvas-wrapper">
+                <canvas id="throughputChart"></canvas>
             </div>
         </div>
 
