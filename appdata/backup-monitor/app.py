@@ -15,13 +15,33 @@ from pathlib import Path
 
 app = Flask(__name__)
 
-# Config - check for new metrics every 6 hours
-IMPORT_INTERVAL_SECONDS = 6 * 60 * 60  # 6 hours
+# Config - load from environment with sensible defaults
+try:
+    interval_hours = float(os.getenv('IMPORT_INTERVAL_HOURS', '6'))
+    if interval_hours < 0.0166:  # Minimum 1 minute
+        print(f"Warning: IMPORT_INTERVAL_HOURS too small ({interval_hours}h), using minimum 1 minute")
+        IMPORT_INTERVAL_SECONDS = 60
+    else:
+        IMPORT_INTERVAL_SECONDS = int(interval_hours * 60 * 60)
+except ValueError as e:
+    print(f"Warning: Invalid IMPORT_INTERVAL_HOURS, using default 6h: {e}")
+    IMPORT_INTERVAL_SECONDS = 6 * 60 * 60
 
-# Config
-DB_PATH = "/data/backups.db"
-METRICS_FILE = "/data/metrics.jsonl"
-RETENTION_DAYS = 90
+try:
+    RETENTION_DAYS = int(os.getenv('RETENTION_DAYS', '90'))
+    if RETENTION_DAYS < 1:
+        print(f"Warning: RETENTION_DAYS must be positive, using default 90")
+        RETENTION_DAYS = 90
+except ValueError as e:
+    print(f"Warning: Invalid RETENTION_DAYS, using default 90: {e}")
+    RETENTION_DAYS = 90
+
+DB_PATH = os.getenv('DB_PATH', '/data/backups.db')
+METRICS_FILE = os.getenv('METRICS_FILE', '/data/metrics.jsonl')
+
+# Ensure parent directories exist
+os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+os.makedirs(os.path.dirname(METRICS_FILE), exist_ok=True)
 
 def init_db():
     """Initialize SQLite database with schema"""
@@ -419,6 +439,15 @@ def periodic_import():
             print(f"[{datetime.now().isoformat()}] Error during periodic import: {e}")
 
 if __name__ == '__main__':
+    # Print startup configuration
+    print("=" * 60)
+    print("Backup Monitor Configuration:")
+    print(f"  Database:        {DB_PATH}")
+    print(f"  Metrics file:    {METRICS_FILE}")
+    print(f"  Retention:       {RETENTION_DAYS} days")
+    print(f"  Import interval: {IMPORT_INTERVAL_SECONDS / 3600} hours")
+    print("=" * 60)
+
     # Initialize database
     init_db()
 

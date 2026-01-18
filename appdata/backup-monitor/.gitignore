@@ -8,6 +8,9 @@ venv/
 env/
 ENV/
 
+# Environment
+.env
+
 # Data
 data/
 *.db

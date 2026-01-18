@@ -139,8 +139,28 @@ For phase-level timing, see the [integration example](examples/backup-integratio
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `TZ` | UTC | Timezone for timestamps |
-| `RETENTION_DAYS` | 90 | How long to keep metrics |
+| `TZ` | UTC | Timezone for timestamps (system-level) |
+| `RETENTION_DAYS` | `90` | How long to keep metrics in database (days) |
+| `IMPORT_INTERVAL_HOURS` | `6` | How often to check for new metrics (supports decimals, e.g., `0.5` = 30 min) |
+| `DB_PATH` | `/data/backups.db` | Path to SQLite database file |
+| `METRICS_FILE` | `/data/metrics.jsonl` | Path to JSONL metrics input file |
+
+**Example configurations:**
+
+```yaml
+# Quick imports (check every 30 minutes)
+environment:
+  IMPORT_INTERVAL_HOURS: "0.5"
+
+# Long-term retention (1 year)
+environment:
+  RETENTION_DAYS: "365"
+
+# Custom storage paths (e.g., NFS mount)
+environment:
+  DB_PATH: "/mnt/nfs/homelab/backup-monitor.db"
+  METRICS_FILE: "/mnt/nfs/homelab/metrics.jsonl"
+```
 
 ### Data Retention
 
@@ -182,11 +202,25 @@ Tested on Raspberry Pi 4 (8GB):
 ### Local Development
 
 ```bash
+# Setup virtual environment
 python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
+
+# Optional: Configure via .env file (if not provided, defaults will be used)
+# cp .env.example .env
+# Edit .env with your preferred settings
+# export $(cat .env | xargs)
+
+# Run app (uses defaults if no env vars set)
 python app.py
 ```
+
+The app will use sensible defaults if no `.env` file is provided:
+- Database: `/data/backups.db`
+- Metrics: `/data/metrics.jsonl`
+- Retention: 90 days
+- Import interval: Every 6 hours
 
 Visit `http://localhost:5001`
 

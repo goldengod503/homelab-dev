@@ -11,6 +11,14 @@ services:
       - ./data:/data
     environment:
       TZ: America/Los_Angeles  # Change to your timezone
+
+      # Optional: Customize monitoring behavior
+      # RETENTION_DAYS: "180"              # Keep 6 months of data (default: 90)
+      # IMPORT_INTERVAL_HOURS: "1"         # Check for new metrics hourly (default: 6)
+
+      # Optional: Custom storage paths
+      # DB_PATH: "/data/custom.db"         # Custom database location
+      # METRICS_FILE: "/data/custom.jsonl" # Custom metrics file location
     mem_limit: 128m
     mem_reservation: 64m
     healthcheck:
