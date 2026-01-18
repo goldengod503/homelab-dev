@@ -123,22 +123,27 @@ def get_stats():
             MAX(duration_total) as max_duration,
             MIN(duration_total) as min_duration,
             AVG(size_bytes) as avg_size,
-            SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as successful
+            SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as successful,
+            AVG(CAST(size_bytes AS REAL) / duration_total) as avg_throughput_bytes_per_sec
         FROM backups
-        WHERE timestamp >= ?
+        WHERE timestamp >= ? AND duration_total > 0
     ''', (thirty_days_ago,))
 
     row = c.fetchone()
     conn.close()
 
     if row and row[0]:
+        # Calculate MB/s from bytes/sec
+        avg_throughput_mb_per_sec = (row[6] / 1024 / 1024) if row[6] else 0
+
         return {
             'total_backups': row[0],
             'avg_duration': int(row[1]) if row[1] else 0,
             'max_duration': row[2] or 0,
             'min_duration': row[3] or 0,
             'avg_size_mb': int(row[4] / 1024 / 1024) if row[4] else 0,
-            'success_rate': int((row[5] / row[0]) * 100) if row[0] else 0
+            'success_rate': int((row[5] / row[0]) * 100) if row[0] else 0,
+            'avg_throughput_mb_per_sec': round(avg_throughput_mb_per_sec, 2)
         }
     return {
         'total_backups': 0,
@@ -146,7 +151,8 @@ def get_stats():
         'max_duration': 0,
         'min_duration': 0,
         'avg_size_mb': 0,
-        'success_rate': 0
+        'success_rate': 0,
+        'avg_throughput_mb_per_sec': 0
     }
 
 @app.route('/')
@@ -175,6 +181,11 @@ def api_metrics():
 
     metrics = []
     for row in reversed(rows):
+        duration = row[2]
+        size_bytes = row[7]
+        # Calculate throughput in MB/s
+        throughput_mb_per_sec = (size_bytes / duration / 1024 / 1024) if duration > 0 else 0
+
         metrics.append({
             'timestamp': row[0],
             'backup_id': row[1],
@@ -183,7 +194,8 @@ def api_metrics():
             'duration_archive': row[4] or 0,
             'duration_volumes': row[5] or 0,
             'duration_upload': row[6] or 0,
-            'size_bytes': row[7]
+            'size_bytes': row[7],
+            'throughput_mb_per_sec': round(throughput_mb_per_sec, 2)
         })
 
     return jsonify(metrics)
