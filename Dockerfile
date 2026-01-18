@@ -9,6 +9,8 @@ RUN apk add --no-cache wget && \
 
 # Copy application
 COPY app.py .
+COPY templates/ templates/
+COPY static/ static/
 
 # Create data directory
 RUN mkdir -p /data
