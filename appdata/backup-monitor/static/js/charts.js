@@ -9,6 +9,26 @@ const chartColors = {
     text: '#94a3b8'
 };
 
+const categoryColors = {
+    network_error: '#ef4444',
+    disk_full: '#f59e0b',
+    timeout: '#8b5cf6',
+    permission_denied: '#ec4899',
+    snapshot_failed: '#f97316',
+    upload_failed: '#06b6d4',
+    unknown: '#64748b'
+};
+
+const categoryLabels = {
+    network_error: 'Network Error',
+    disk_full: 'Disk Full',
+    timeout: 'Timeout',
+    permission_denied: 'Permission Denied',
+    snapshot_failed: 'Snapshot Failed',
+    upload_failed: 'Upload Failed',
+    unknown: 'Unknown'
+};
+
 const chartDefaults = {
     responsive: true,
     maintainAspectRatio: false,
@@ -114,5 +134,81 @@ async function loadCharts() {
     }
 }
 
+async function loadFailures() {
+    const container = document.getElementById('failureList');
+
+    const response = await fetch('/api/failures');
+    const failures = await response.json();
+
+    if (failures.length === 0) {
+        container.innerHTML = '<div class="empty-state">No recent failures</div>';
+        return;
+    }
+
+    let html = '<table class="failure-table"><thead><tr>' +
+        '<th>Timestamp</th><th>Backup ID</th><th>Category</th><th>Error Message</th>' +
+        '</tr></thead><tbody>';
+
+    for (const f of failures) {
+        const cat = f.error_category || 'unknown';
+        const color = categoryColors[cat] || categoryColors.unknown;
+        const label = categoryLabels[cat] || cat;
+        const date = new Date(f.timestamp).toLocaleString();
+        const msg = f.error_message || '\u2014';
+
+        html += '<tr class="failure-row">' +
+            `<td>${date}</td>` +
+            `<td>${f.backup_id}</td>` +
+            `<td><span class="error-badge" style="background:${color}20;color:${color};border:1px solid ${color}40">${label}</span></td>` +
+            `<td class="error-message-cell">${msg}</td>` +
+            '</tr>';
+    }
+
+    html += '</tbody></table>';
+    container.innerHTML = html;
+}
+
+async function loadFailureTrends() {
+    const response = await fetch('/api/failure-trends');
+    const trends = await response.json();
+
+    if (trends.length === 0) return;
+
+    // Group by week and category
+    const weeks = [...new Set(trends.map(t => t.week))];
+    const categories = [...new Set(trends.map(t => t.error_category))];
+
+    const datasets = categories.map(cat => {
+        const color = categoryColors[cat] || categoryColors.unknown;
+        const label = categoryLabels[cat] || cat;
+        return {
+            label: label,
+            data: weeks.map(w => {
+                const match = trends.find(t => t.week === w && t.error_category === cat);
+                return match ? match.count : 0;
+            }),
+            backgroundColor: color
+        };
+    });
+
+    new Chart(document.getElementById('failureChart'), {
+        type: 'bar',
+        data: {
+            labels: weeks.map(w => 'Week ' + w.split('-')[1]),
+            datasets: datasets
+        },
+        options: {
+            ...chartDefaults,
+            scales: {
+                ...chartDefaults.scales,
+                x: { ...chartDefaults.scales.x, stacked: true },
+                y: { ...chartDefaults.scales.y, stacked: true, beginAtZero: true }
+            }
+        }
+    });
+}
+
 // Load charts when page loads
 loadCharts();
+loadFailures();
+loadFailureTrends();

@@ -22,6 +22,10 @@
                 <div class="stat-value success">{{ stats.success_rate }}<span class="stat-unit">%</span></div>
             </div>
             <div class="stat-card">
+                <div class="stat-label">Failed</div>
+                <div class="stat-value {% if stats.failed_backups > 0 %}danger{% endif %}">{{ stats.failed_backups }}</div>
+            </div>
+            <div class="stat-card">
                 <div class="stat-label">Avg Duration</div>
                 <div class="stat-value">{{ stats.avg_duration // 60 }}<span class="stat-unit">min</span></div>
             </div>
@@ -61,6 +65,18 @@
             <div class="canvas-wrapper">
                 <canvas id="breakdownChart"></canvas>
             </div>
+        </div>
+
+        <div class="chart-container">
+            <div class="chart-title">Failure Trends (Last 30 Days)</div>
+            <div class="canvas-wrapper">
+                <canvas id="failureChart"></canvas>
+            </div>
+        </div>
+
+        <div class="chart-container">
+            <div class="chart-title">Recent Failures</div>
+            <div id="failureList"></div>
         </div>
     </div>
 

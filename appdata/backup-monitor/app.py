@@ -59,10 +59,18 @@ def init_db():
             duration_volumes INTEGER,
             duration_upload INTEGER,
             size_bytes INTEGER NOT NULL,
+            error_category TEXT,
+            error_message TEXT,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP
         )
     ''')
     c.execute('CREATE INDEX IF NOT EXISTS idx_timestamp ON backups(timestamp)')
+    # Migrate existing databases: add error columns if missing
+    for col in ['error_category TEXT', 'error_message TEXT']:
+        try:
+            c.execute(f'ALTER TABLE backups ADD COLUMN {col}')
+        except sqlite3.OperationalError:
+            pass  # Column already exists
     conn.commit()
     conn.close()
 
@@ -80,21 +88,30 @@ def import_metrics():
                 continue
             try:
                 data = json.loads(line)
+                success = data['success']
+                error_category = None
+                error_message = None
+                if not success:
+                    error_category = data.get('error_category', 'unknown')
+                    error_message = data.get('error_message')
                 c.execute('''
                     INSERT OR IGNORE INTO backups
                     (timestamp, backup_id, success, duration_total, duration_snapshot,
-                     duration_archive, duration_volumes, duration_upload, size_bytes)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     duration_archive, duration_volumes, duration_upload, size_bytes,
+                     error_category, error_message)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
                     data['timestamp'],
                     data['backup_id'],
-                    1 if data['success'] else 0,
+                    1 if success else 0,
                     data['duration_total'],
                     data.get('duration_snapshot', 0),
                     data.get('duration_archive', 0),
                     data.get('duration_volumes', 0),
                     data.get('duration_upload', 0),
-                    data['size_bytes']
+                    data['size_bytes'],
+                    error_category,
+                    error_message
                 ))
             except (json.JSONDecodeError, KeyError) as e:
                 print(f"Skipping invalid line: {e}")
@@ -135,6 +152,7 @@ def get_stats():
     if row and row[0]:
         # Calculate MB/s from bytes/sec
         avg_throughput_mb_per_sec = (row[6] / 1024 / 1024) if row[6] else 0
+        failed = row[0] - (row[5] or 0)
 
         return {
             'total_backups': row[0],
@@ -143,7 +161,8 @@ def get_stats():
             'min_duration': row[3] or 0,
             'avg_size_mb': int(row[4] / 1024 / 1024) if row[4] else 0,
             'success_rate': int((row[5] / row[0]) * 100) if row[0] else 0,
-            'avg_throughput_mb_per_sec': round(avg_throughput_mb_per_sec, 2)
+            'avg_throughput_mb_per_sec': round(avg_throughput_mb_per_sec, 2),
+            'failed_backups': failed
         }
     return {
         'total_backups': 0,
@@ -152,7 +171,8 @@ def get_stats():
         'min_duration': 0,
         'avg_size_mb': 0,
         'success_rate': 0,
-        'avg_throughput_mb_per_sec': 0
+        'avg_throughput_mb_per_sec': 0,
+        'failed_backups': 0
     }
 
 @app.route('/')
@@ -169,8 +189,9 @@ def api_metrics():
 
     # Get last 30 backups
     c.execute('''
-        SELECT timestamp, backup_id, duration_total, duration_snapshot,
-               duration_archive, duration_volumes, duration_upload, size_bytes
+        SELECT timestamp, backup_id, success, duration_total, duration_snapshot,
+               duration_archive, duration_volumes, duration_upload, size_bytes,
+               error_category, error_message
         FROM backups
         ORDER BY timestamp DESC
         LIMIT 30
@@ -181,24 +202,78 @@ def api_metrics():
 
     metrics = []
     for row in reversed(rows):
-        duration = row[2]
-        size_bytes = row[7]
+        duration = row[3]
+        size_bytes = row[8]
         # Calculate throughput in MB/s
         throughput_mb_per_sec = (size_bytes / duration / 1024 / 1024) if duration > 0 else 0
 
         metrics.append({
             'timestamp': row[0],
             'backup_id': row[1],
-            'duration_total': row[2],
-            'duration_snapshot': row[3] or 0,
-            'duration_archive': row[4] or 0,
-            'duration_volumes': row[5] or 0,
-            'duration_upload': row[6] or 0,
-            'size_bytes': row[7],
-            'throughput_mb_per_sec': round(throughput_mb_per_sec, 2)
+            'success': bool(row[2]),
+            'duration_total': row[3],
+            'duration_snapshot': row[4] or 0,
+            'duration_archive': row[5] or 0,
+            'duration_volumes': row[6] or 0,
+            'duration_upload': row[7] or 0,
+            'size_bytes': row[8],
+            'throughput_mb_per_sec': round(throughput_mb_per_sec, 2),
+            'error_category': row[9],
+            'error_message': row[10]
         })
 
     return jsonify(metrics)
+
+@app.route('/api/failures')
+def api_failures():
+    """API endpoint for recent failures"""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+
+    c.execute('''
+        SELECT timestamp, backup_id, error_category, error_message
+        FROM backups
+        WHERE success = 0
+        ORDER BY timestamp DESC
+        LIMIT 10
+    ''')
+
+    rows = c.fetchall()
+    conn.close()
+
+    failures = [{
+        'timestamp': row[0],
+        'backup_id': row[1],
+        'error_category': row[2] or 'unknown',
+        'error_message': row[3]
+    } for row in rows]
+
+    return jsonify(failures)
+
+@app.route('/api/failure-trends')
+def api_failure_trends():
+    """API endpoint for failure trends by category per week"""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+
+    thirty_days_ago = (datetime.now() - timedelta(days=30)).isoformat()
+
+    c.execute('''
+        SELECT
+            strftime('%Y-%W', timestamp) as week,
+            error_category,
+            COUNT(*) as count
+        FROM backups
+        WHERE success = 0 AND timestamp >= ?
+        GROUP BY week, error_category
+        ORDER BY week
+    ''', (thirty_days_ago,))
+
+    rows = c.fetchall()
+    conn.close()
+
+    trends = [{'week': row[0], 'error_category': row[1] or 'unknown', 'count': row[2]} for row in rows]
+    return jsonify(trends)
 
 @app.route('/health')
 def health():

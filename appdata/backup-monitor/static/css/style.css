@@ -85,9 +85,58 @@ h1 {
     color: #10b981;
 }
 
+.danger {
+    color: #ef4444;
+}
+
 .loading {
     text-align: center;
     padding: 40px;
+    color: #64748b;
+}
+
+.failure-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.failure-table th {
+    text-align: left;
+    padding: 10px 12px;
+    color: #94a3b8;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-bottom: 1px solid #334155;
+}
+
+.failure-row td {
+    padding: 10px 12px;
+    border-bottom: 1px solid #1e293b;
+    font-size: 0.9rem;
+    color: #e2e8f0;
+}
+
+.error-badge {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: 0.8rem;
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.error-message-cell {
+    color: #94a3b8;
+    max-width: 400px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.empty-state {
+    text-align: center;
+    padding: 30px;
     color: #64748b;
 }
 
