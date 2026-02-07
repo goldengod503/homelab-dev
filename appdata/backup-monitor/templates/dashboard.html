@@ -6,10 +6,107 @@
     <title>Backup Monitor</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+
+    <style>
+        /* Header row: title on left, refresh on right (normal flow; scrolls away) */
+        .header-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+        }
+
+        .header-row h1 {
+            margin: 0;
+        }
+
+        .refresh-wrap {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-shrink: 0;
+        }
+
+        .refresh-btn {
+            background: transparent;
+            color: #fff;
+            border: 2px solid #fff;
+            border-radius: 12px;
+            padding: 8px 12px;
+            font-weight: 600;
+            cursor: pointer;
+            line-height: 1;
+        }
+
+        .refresh-btn:hover {
+            background: rgba(255, 255, 255, 0.08);
+        }
+
+        .refresh-btn:active {
+            transform: translateY(1px);
+        }
+
+        .refresh-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .refresh-status {
+            color: #fff;
+            font-size: 13px;
+            opacity: 0.92;
+            text-align: right;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+            max-width: 320px;
+            transition: opacity 350ms ease;
+            will-change: opacity;
+        }
+
+        .refresh-status.hidden {
+            opacity: 0;
+        }
+
+        /* New: small section header for extra metrics at bottom */
+        .extra-metrics {
+            margin-top: 18px;
+        }
+
+        .extra-metrics .section-title {
+            font-size: 14px;
+            opacity: 0.9;
+            margin: 0 0 10px 0;
+        }
+
+        @media (max-width: 520px) {
+            .header-row {
+                align-items: flex-start;
+                flex-direction: column;
+            }
+            .refresh-wrap {
+                justify-content: flex-end;
+                width: 100%;
+            }
+            .refresh-status {
+                text-align: left;
+                max-width: none;
+            }
+        }
+    </style>
 </head>
 <body>
     <div class="container">
-        <h1>🏠 Homelab Backup Monitor</h1>
+
+        <div class="header-row">
+            <h1>🏠 Homelab Backup Monitor</h1>
+
+            <div class="refresh-wrap">
+                <span id="refreshStatus" class="refresh-status hidden"></span>
+                <button id="refreshBtn" type="button" class="refresh-btn" title="Import latest metrics">
+                    Refresh
+                </button>
+            </div>
+        </div>
+
         <p class="subtitle">Nightly backup metrics • Last 30 days</p>
 
         <div class="stats-grid">
@@ -78,8 +175,85 @@
             <div class="chart-title">Recent Failures</div>
             <div id="failureList"></div>
         </div>
+
+        <!-- New metrics at the bottom -->
+        <div class="extra-metrics">
+            <hr style="margin-top: 24px; opacity: 0.25;">
+            <div class="section-title">Throughput breakdown averages</div>
+
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-label">Avg Archive Rate</div>
+                    <div class="stat-value">{{ stats.avg_archive_mb_per_sec|default(0) }}<span class="stat-unit">MB/s</span></div>
+                </div>
+
+                <div class="stat-card">
+                    <div class="stat-label">Avg Upload Rate</div>
+                    <div class="stat-value">{{ stats.avg_upload_mb_per_sec|default(0) }}<span class="stat-unit">MB/s</span></div>
+                </div>
+
+                <div class="stat-card">
+                    <div class="stat-label">Avg Volumes Rate</div>
+                    <div class="stat-value">{{ stats.avg_volumes_mb_per_sec|default(0) }}<span class="stat-unit">MB/s</span></div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script src="{{ url_for('static', filename='js/charts.js') }}"></script>
+
+    <script>
+        (function () {
+            const btn = document.getElementById('refreshBtn');
+            const status = document.getElementById('refreshStatus');
+
+            const KEEP_MS = 10000; // 10 seconds
+            let hideTimer = null;
+
+            function showStatus(text, keepMs = KEEP_MS) {
+                if (hideTimer) {
+                    clearTimeout(hideTimer);
+                    hideTimer = null;
+                }
+
+                status.textContent = text;
+                status.classList.remove('hidden');
+
+                hideTimer = setTimeout(() => {
+                    status.classList.add('hidden');
+                }, keepMs);
+            }
+
+            async function refreshNow() {
+                btn.disabled = true;
+                showStatus('Importing latest metrics…');
+
+                try {
+                    const res = await fetch('/api/import', { method: 'POST' });
+                    if (!res.ok) throw new Error('Import failed');
+                    const data = await res.json();
+
+                    // Prefer showing inserted count if API returns it; fallback to just timestamp
+                    if (typeof data.inserted === 'number') {
+                        const noun = data.inserted === 1 ? 'datapoint' : 'datapoints';
+                        showStatus(`Imported ${data.inserted} new ${noun} at ${data.imported_at}`);
+                    } else {
+                        showStatus(`Imported at ${data.imported_at}`);
+                    }
+
+                    // Reload so charts reflect updated DB
+                    setTimeout(() => {
+                        window.location.reload();
+                    }, 700);
+                } catch (e) {
+                    console.error(e);
+                    showStatus('Refresh failed Check container logs');
+                    btn.disabled = false;
+                }
+            }
+
+            btn.addEventListener('click', refreshNow);
+        })();
+    </script>
 </body>
 </html>
